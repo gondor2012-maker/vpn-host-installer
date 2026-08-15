@@ -1,0 +1,32 @@
+# VPN Host Installer v2.0 Configuration
+# Улучшенный установщик без vendor lock-in
+
+# Режим: 1=панель+нода, 2=панель+удалённая нода, 3=только нода
+mode: "1"
+
+# Тип панели: remnawave | xui
+panel_type: "xui"
+
+# Базовый домен (например: example.com)
+domain: ""
+
+# Поддомены (если пусто — сгенерируются автоматически)
+# origin_sub: "abc123"      # origin.abc123.example.com -> нода
+# front_sub: "def456"       # front.def456.example.com -> REG.RU фронт
+# panel_sub: "panel789"     # panel.panel789.example.com -> панель
+
+# XHTTP настройки
+xray_port: 2053
+xhttp_path: "/p"
+xhttp_mode: "packet-up"
+xhttp_method: "DELETE"
+padding_key: "q"
+
+# Каскад (опционально)
+# cascade:
+#   ip: "1.2.3.4"
+#   uuid: "..."
+
+# Ручное указание UUID и sub_id (иначе сгенерируются)
+# client_uuid: "..."
+# sub_id: "..."
