@@ -1,5 +1,6 @@
 """
-REG.RU shared hosting frontend via .htaccess mod_proxy.
+[DEPRECATED] REG.RU shared hosting frontend via .htaccess mod_proxy.
+REG.RU отключил mod_proxy на shared-хостинге — используйте CDN.
 """
 import ftplib
 import time
