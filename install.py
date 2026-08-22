@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 """
-VPN Host Installer v2.0
-Улучшенный установщик VPN-инфраструктуры с XHTTP packet-up.
-
-Улучшения по сравнению с v1.1:
-- Модульная архитектура (легко расширять)
-- Idempotency (можно перезапускать без дублей)
-- Состояние установки в /opt/vpn-host-installer/state.json
-- Чистый rollback
-- Нет vendor lock-in (нет внешнего сервера лицензий)
-- Конфигурация через YAML
-- Улучшенная обработка ошибок
-- Поддержка каскада из коробки
+VPN Host Installer v2.1 — CDN Edition
+Убран REG.RU shared hosting (отключили mod_proxy).
+Теперь только CDN: Cloudflare, VK Cloud, Yandex Cloud, Timeweb, CDNvideo.
 """
 import os
 import sys
@@ -19,7 +10,6 @@ import yaml
 import argparse
 from pathlib import Path
 
-# Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from utils.shell import run, get_public_ip, is_installed
@@ -32,12 +22,15 @@ from network import nginx as ngx, ssl as ssl_mgr, firewall
 from node import xray, remnanode
 from panels.xui import XUIPanel
 from panels.remnawave import RemnawavePanel
-from front.regru import RegruFront
+from front.cloudflare import CloudflareFront
+from front.vkcdn import VKCDNFront
+from front.yandexcdn import YandexCDNFront
+from front.timeweb import TimewebCDNFront
+from front.cdnvideo import CDNvideoFront
 
 
 def load_config(path: str = "config.yaml") -> dict:
     if not os.path.exists(path):
-        print(f"  Файл {path} не найден, использую defaults")
         return {}
     with open(path) as f:
         return yaml.safe_load(f) or {}
@@ -49,32 +42,62 @@ def step(n: int, text: str) -> None:
     print(f"{'='*50}")
 
 
+def choose_cdn(cfg: dict) -> str:
+    if cfg.get("cdn"):
+        return cfg["cdn"]
+
+    print("""
+  Выбери CDN-провайдер для фронта:
+
+  [1] Cloudflare (рекомендуется — бесплатно, надёжно)
+  [2] VK Cloud CDN
+  [3] Yandex Cloud CDN
+  [4] Timeweb CDN
+  [5] CDNvideo (Beeline)
+  [6] REG.RU shared hosting [DEPRECATED — скорее всего не работает]
+""")
+    choice = input("  > ").strip()
+    cdn_map = {"1": "cloudflare", "2": "vk", "3": "yandex", "4": "timeweb", "5": "cdnvideo", "6": "regru"}
+    return cdn_map.get(choice, "cloudflare")
+
+
+def get_front_class(cdn: str):
+    mapping = {
+        "cloudflare": CloudflareFront,
+        "vk": VKCDNFront,
+        "yandex": YandexCDNFront,
+        "timeweb": TimewebCDNFront,
+        "cdnvideo": CDNvideoFront,
+        "regru": None,  # imported dynamically if needed
+    }
+    return mapping.get(cdn, CloudflareFront)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="VPN Host Installer v2.0")
-    parser.add_argument("--config", default="config.yaml", help="Path to config file")
-    parser.add_argument("--mode", choices=["1", "2", "3"], help="1=panel+node, 2=panel+remote-node, 3=node-only")
-    parser.add_argument("--panel", choices=["remnawave", "xui"], help="Panel type")
-    parser.add_argument("--domain", help="Base domain")
-    parser.add_argument("--front-domain", help="Front domain (for REG.RU)")
-    parser.add_argument("--rollback", action="store_true", help="Rollback installation")
+    parser = argparse.ArgumentParser(description="VPN Host Installer v2.1 CDN")
+    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--mode", choices=["1", "2", "3"])
+    parser.add_argument("--panel", choices=["remnawave", "xui"])
+    parser.add_argument("--domain")
+    parser.add_argument("--front-domain")
+    parser.add_argument("--cdn", choices=["cloudflare", "vk", "yandex", "timeweb", "cdnvideo", "regru"])
+    parser.add_argument("--rollback", action="store_true")
     args = parser.parse_args()
 
-    # Rollback mode
     if args.rollback:
         RollbackManager().rollback()
         return
 
-    # Check root
     if os.geteuid() != 0:
         print("ОШИБКА: Запусти от root!")
         sys.exit(1)
 
-    # Load config
     cfg = load_config(args.config)
     cfg["mode"] = args.mode or cfg.get("mode", "1")
     cfg["panel_type"] = args.panel or cfg.get("panel_type", "xui")
     cfg["domain"] = args.domain or cfg.get("domain")
     cfg["front_domain"] = args.front_domain or cfg.get("front_domain")
+    cfg["cdn"] = args.cdn or cfg.get("cdn")
 
     if not cfg["domain"]:
         cfg["domain"] = input("  Домен (без http://): ").strip()
@@ -86,7 +109,7 @@ def main():
 
     server_ip = get_public_ip()
     print(f"\n{'='*50}")
-    print(f"   VPN Host Installer v2.0")
+    print(f"   VPN Host Installer v2.1 — CDN Edition")
     print(f"   Server IP: {server_ip}")
     print(f"{'='*50}")
 
@@ -94,7 +117,11 @@ def main():
     state.set_config("domain", cfg["domain"])
     state.set_config("server_ip", server_ip)
 
-    # Generate subdomains if not set
+    # CDN selection
+    cfg["cdn"] = choose_cdn(cfg)
+    print(f"  CDN: {cfg['cdn']}")
+
+    # Generate subdomains
     if not cfg.get("origin_sub"):
         cfg["origin_sub"] = generate_subdomain()
     if not cfg.get("front_domain"):
@@ -112,7 +139,7 @@ def main():
     print(f"  Front:  {cfg['front_domain']}")
     print(f"  Panel:  {cfg['panel_domain']}")
 
-    # === STEP 1: System preparation ===
+    # === STEP 1: System ===
     step(1, "Подготовка системы")
     if not state.has_step("system:prepared"):
         packages.check_os()
@@ -126,7 +153,7 @@ def main():
     else:
         print("  ℹ️ Система уже подготовлена")
 
-    # === STEP 2: SSL & Nginx base ===
+    # === STEP 2: SSL & Nginx ===
     step(2, "SSL и Nginx")
     if not state.has_step("nginx:base"):
         cert, key = ssl_mgr.ensure_self_signed(cfg["origin_domain"], state)
@@ -135,7 +162,14 @@ def main():
     else:
         cert, key = ssl_mgr.ensure_self_signed(cfg["origin_domain"])
 
-    # === STEP 3: Panel installation (modes 1 & 2) ===
+    # Try Let's Encrypt for origin domain (needed for CDN with strict SSL)
+    if not state.has_step("ssl:le:origin"):
+        le_cert, le_key = ssl_mgr.get_le_cert(cfg["origin_domain"], state)
+        if le_cert:
+            cert, key = le_cert, le_key
+            state.add_step("ssl:le:origin")
+
+    # === STEP 3: Panel ===
     panel = None
     if cfg["mode"] in ("1", "2"):
         step(3, f"Установка панели {cfg['panel_type']}")
@@ -150,12 +184,11 @@ def main():
             panel.setup_ssl(cfg["panel_domain"])
             state.add_step(f"panel:{cfg['panel_type']}:installed")
 
-        # Panel nginx
         if not state.has_step("nginx:panel"):
             ngx.reload(state)
             state.add_step("nginx:panel")
 
-    # === STEP 4: Node setup ===
+    # === STEP 4: Node ===
     step(4, "Установка ноды")
     node_ip = server_ip if cfg["mode"] in ("1", "3") else cfg.get("node_ip", server_ip)
     xray_port = cfg.get("xray_port", 2053)
@@ -198,25 +231,31 @@ def main():
         firewall.restrict_port(pport, server_ip, "tcp", state)
     firewall.save(state)
 
-    # === STEP 5: Panel inbound creation ===
+    # === STEP 5: Panel inbound ===
     sub_url = None
     if panel and not state.has_step("panel:inbound"):
         step(5, "Создание inbound в панели")
         sub_url = panel.create_inbound(node_ip, xray_port, xhttp_path, cfg["client_uuid"])
         state.add_step("panel:inbound")
 
-    # === STEP 6: Front setup ===
-    step(6, "Настройка фронта")
+    # === STEP 6: CDN Front ===
+    step(6, f"Настройка CDN фронта ({cfg['cdn']})")
     front_cfg = {
         "front_domain": cfg["front_domain"],
         "node_ip": node_ip,
         "path": xhttp_path
     }
-    front = RegruFront(front_cfg)
+
+    FrontClass = get_front_class(cfg["cdn"])
+    if cfg["cdn"] == "regru":
+        from front.regru import RegruFront
+        FrontClass = RegruFront
+
+    front = FrontClass(front_cfg)
 
     if not front.setup():
         print(front.instructions())
-        input("  Нажми ENTER когда фронт настроен...")
+        input("  Нажми ENTER когда CDN настроен...")
 
     front.verify()
 
@@ -236,8 +275,9 @@ def main():
   УСТАНОВКА ЗАВЕРШЕНА
   ============================================
 
+  CDN:    {cfg['cdn']}
   Origin: {cfg['origin_domain']} -> {node_ip}
-  Front:  {cfg['front_domain']} (REG.RU shared hosting)
+  Front:  {cfg['front_domain']} (CDN)
 
   Xray port: {xray_port}
   Path: {xhttp_path}
