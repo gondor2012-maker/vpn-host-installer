@@ -1,5 +1,6 @@
-# VPN Host Installer v2.0 Configuration
-# Улучшенный установщик без vendor lock-in
+# VPN Host Installer v2.1 — CDN Edition
+# REG.RU shared hosting больше НЕ РАБОТАЕТ (отключили mod_proxy).
+# Используйте CDN-провайдеров.
 
 # Режим: 1=панель+нода, 2=панель+удалённая нода, 3=только нода
 mode: "1"
@@ -10,9 +11,12 @@ panel_type: "xui"
 # Базовый домен (например: example.com)
 domain: ""
 
+# CDN-провайдер: cloudflare | vk | yandex | timeweb | cdnvideo | regru
+cdn: "cloudflare"
+
 # Поддомены (если пусто — сгенерируются автоматически)
-# origin_sub: "abc123"      # origin.abc123.example.com -> нода
-# front_sub: "def456"       # front.def456.example.com -> REG.RU фронт
+# origin_sub: "abc123"      # origin.abc123.example.com -> нода (origin server)
+# front_sub: "def456"       # front.def456.example.com -> CDN CNAME
 # panel_sub: "panel789"     # panel.panel789.example.com -> панель
 
 # XHTTP настройки
