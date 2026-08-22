@@ -1,5 +1,5 @@
 #!/bin/bash
-# VPN Host Installer v2.0 — Bootstrap Script
+# VPN Host Installer v2.1 — CDN Edition Bootstrap
 # Usage: curl -fsSL https://raw.githubusercontent.com/gondor2012-maker/vpn-host-installer/main/install.sh | bash
 
 set -e
@@ -8,7 +8,7 @@ REPO_URL="https://github.com/gondor2012-maker/vpn-host-installer/archive/refs/he
 INSTALL_DIR="/opt/vpn-host-installer"
 
 echo "=========================================="
-echo "  VPN Host Installer v2.0"
+echo "  VPN Host Installer v2.1 — CDN Edition"
 echo "=========================================="
 
 if [ "$EUID" -ne 0 ]; then
